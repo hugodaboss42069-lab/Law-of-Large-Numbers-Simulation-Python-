@@ -4,16 +4,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
+from scipy import stats
 from collections import deque
+import math
 
 # Page configuration
 st.set_page_config(
-    page_title="Law of Large Numbers - Coin Flip Simulator",
-    page_icon="🪙",
+    page_title="Law of Large Numbers - Advanced Statistical Analysis",
+    page_icon="📊",
     layout="wide"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -64,10 +66,17 @@ st.markdown("""
         transform: scale(1.02);
         transition: 0.2s;
     }
+    .insight-box {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #4ECDC4;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-class CoinFlipSimulator:
+class AdvancedCoinFlipSimulator:
     def __init__(self):
         self.total_flips = 0
         self.heads = 0
@@ -75,29 +84,26 @@ class CoinFlipSimulator:
         self.history = []
         self.running = False
         self.max_flips = 1000000
-
+        self.flip_results = []  # Store individual results for advanced analysis
+        
     def flip_coin(self, heads_weight, flip_force):
         """Simulate a coin flip with weight and force"""
-        # Force affects randomness (1-10 scale)
         force_factor = flip_force / 10.0
-
-        # Higher force = more randomness (closer to 50/50)
         effective_weight = 0.5 + (heads_weight - 0.5) * (1 - force_factor * 0.7)
-
-        # Add random noise based on force
         noise_scale = 0.05 + (flip_force / 10.0) * 0.1
         noise = np.random.normal(0, noise_scale)
         final_prob = np.clip(effective_weight + noise, 0.01, 0.99)
-
         return 1 if np.random.random() < final_prob else 0
-
+    
     def run_flips(self, num_flips, heads_weight, flip_force):
         """Run multiple flips and update state"""
         new_heads = 0
         new_tails = 0
-
+        
         for _ in range(num_flips):
             result = self.flip_coin(heads_weight, flip_force)
+            self.flip_results.append(result)
+            
             if result == 1:
                 self.heads += 1
                 new_heads += 1
@@ -105,220 +111,370 @@ class CoinFlipSimulator:
                 self.tails += 1
                 new_tails += 1
             self.total_flips += 1
-
+            
             # Store history at intervals
-            if self.total_flips % max(1, num_flips // 100) == 0:
+            if self.total_flips % max(1, num_flips // 50) == 0:
                 proportion = self.heads / self.total_flips
-                self.history.append((self.total_flips, proportion))
-
+                std_error = math.sqrt((proportion * (1 - proportion)) / self.total_flips)
+                self.history.append({
+                    'flips': self.total_flips,
+                    'proportion': proportion,
+                    'std_error': std_error,
+                    'heads': self.heads,
+                    'tails': self.tails
+                })
+        
         return new_heads, new_tails
+    
+    def get_statistics(self, heads_weight):
+        """Calculate comprehensive statistics"""
+        if self.total_flips == 0:
+            return None
+        
+        current_prop = self.heads / self.total_flips
+        diff = abs(current_prop - heads_weight)
+        std_error = math.sqrt((current_prop * (1 - current_prop)) / self.total_flips)
+        
+        # Z-score
+        z_score = (current_prop - heads_weight) / std_error if std_error > 0 else 0
+        
+        # Confidence interval (95%)
+        ci_lower = current_prop - 1.96 * std_error
+        ci_upper = current_prop + 1.96 * std_error
+        
+        # Chi-square test
+        expected_heads = self.total_flips * heads_weight
+        expected_tails = self.total_flips * (1 - heads_weight)
+        chi2 = ((self.heads - expected_heads)**2 / expected_heads + 
+                (self.tails - expected_tails)**2 / expected_tails)
+        chi2_p_value = 1 - stats.chi2.cdf(chi2, 1)
+        
+        # Running statistics if we have history
+        if len(self.history) > 1:
+            proportions = [h['proportion'] for h in self.history]
+            std_props = np.std(proportions)
+            trend = np.polyfit(range(len(proportions)), proportions, 1)[0]
+        else:
+            std_props = 0
+            trend = 0
+        
+        # Convergence analysis
+        if len(self.history) > 10:
+            recent_props = [h['proportion'] for h in self.history[-10:]]
+            recent_std = np.std(recent_props)
+            convergence_rate = -trend if trend < 0 else 0
+        else:
+            recent_std = 0
+            convergence_rate = 0
+        
+        # Probability within range
+        prob_within_1pct = 0
+        prob_within_5pct = 0
+        if len(self.history) > 0:
+            recent_diffs = [abs(h['proportion'] - heads_weight) for h in self.history[-50:]]
+            prob_within_1pct = sum(1 for d in recent_diffs if d < 0.01) / len(recent_diffs) * 100
+            prob_within_5pct = sum(1 for d in recent_diffs if d < 0.05) / len(recent_diffs) * 100
+        
+        # Expected flips to convergence
+        expected_flips_to_conv = 0
+        if diff > 0.01 and convergence_rate > 0:
+            expected_flips_to_conv = (diff - 0.01) / convergence_rate
+        
+        return {
+            'total_flips': self.total_flips,
+            'heads': self.heads,
+            'tails': self.tails,
+            'current_prop': current_prop,
+            'expected_prop': heads_weight,
+            'diff': diff,
+            'std_error': std_error,
+            'z_score': z_score,
+            'ci_lower': ci_lower,
+            'ci_upper': ci_upper,
+            'chi2': chi2,
+            'chi2_p_value': chi2_p_value,
+            'std_props': std_props,
+            'trend': trend,
+            'recent_std': recent_std,
+            'convergence_rate': convergence_rate,
+            'prob_within_1pct': prob_within_1pct,
+            'prob_within_5pct': prob_within_5pct,
+            'expected_flips_to_conv': expected_flips_to_conv
+        }
 
-def create_plots(history, heads_weight, total_flips, heads, tails):
-    """Create interactive Plotly figures"""
-
+def create_advanced_plots(history, stats, heads_weight):
+    """Create enhanced plots with statistical analysis"""
+    
+    if not history:
+        fig = go.Figure()
+        fig.add_annotation(text="Run the simulation to see plots", showarrow=False)
+        return fig
+    
     # Extract data
-    if history:
-        flips, proportions = zip(*history)
-    else:
-        flips, proportions = [], []
-
+    flips = [h['flips'] for h in history]
+    proportions = [h['proportion'] for h in history]
+    std_errors = [h['std_error'] for h in history]
+    
     # Create subplots
     fig = make_subplots(
-        rows=2, cols=2,
+        rows=3, cols=2,
         subplot_titles=(
-            'Running Proportion of Heads',
-            'Convergence Status',
+            'Running Proportion with Confidence Intervals',
+            'Standard Error Over Time',
+            'Convergence Analysis',
+            'Z-Score Tracking',
             'Distribution of Outcomes',
-            'Convergence Speed'
+            'Statistical Summary'
         ),
         specs=[[{"secondary_y": False}, {"secondary_y": False}],
+               [{"secondary_y": False}, {"secondary_y": False}],
                [{"secondary_y": False}, {"secondary_y": False}]],
-        vertical_spacing=0.12,
-        horizontal_spacing=0.1
+        vertical_spacing=0.08,
+        horizontal_spacing=0.12
     )
-
-    # Plot 1: Running proportion
-    if flips:
+    
+    # Plot 1: Running proportion with confidence intervals
+    fig.add_trace(
+        go.Scatter(
+            x=flips,
+            y=proportions,
+            mode='lines',
+            name='Proportion',
+            line=dict(color='#4ECDC4', width=2)
+        ),
+        row=1, col=1
+    )
+    
+    # Add confidence interval
+    if stats:
         fig.add_trace(
             go.Scatter(
                 x=flips,
-                y=proportions,
+                y=[p + 1.96*se for p, se in zip(proportions, std_errors)],
                 mode='lines',
-                name='Proportion',
-                line=dict(color='#4ECDC4', width=2)
+                name='95% CI Upper',
+                line=dict(color='rgba(78,205,196,0.2)', width=0),
+                showlegend=False
             ),
             row=1, col=1
         )
-
-        # Expected value line
-        fig.add_hline(
-            y=heads_weight,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"Expected: {heads_weight*100:.1f}%",
-            annotation_position="bottom right",
+        fig.add_trace(
+            go.Scatter(
+                x=flips,
+                y=[p - 1.96*se for p, se in zip(proportions, std_errors)],
+                mode='lines',
+                name='95% CI Lower',
+                line=dict(color='rgba(78,205,196,0.2)', width=0),
+                fill='tonexty',
+                fillcolor='rgba(78,205,196,0.2)',
+                showlegend=False
+            ),
             row=1, col=1
         )
-
-        # Convergence zone (±1%)
+    
+    # Expected value line
+    fig.add_hline(
+        y=heads_weight,
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"Expected: {heads_weight*100:.1f}%",
+        annotation_position="bottom right",
+        row=1, col=1
+    )
+    
+    # Convergence zone
+    fig.add_hrect(
+        y0=heads_weight - 0.01,
+        y1=heads_weight + 0.01,
+        line_width=0,
+        fillcolor="green",
+        opacity=0.1,
+        row=1, col=1
+    )
+    
+    fig.update_xaxes(title_text="Number of Flips", row=1, col=1)
+    fig.update_yaxes(title_text="Proportion", range=[0, 1], row=1, col=1)
+    
+    # Plot 2: Standard Error
+    fig.add_trace(
+        go.Scatter(
+            x=flips,
+            y=std_errors,
+            mode='lines',
+            name='Std Error',
+            line=dict(color='#FF6B6B', width=2),
+            fill='tozeroy',
+            fillcolor='rgba(255,107,107,0.2)'
+        ),
+        row=1, col=2
+    )
+    
+    fig.update_xaxes(title_text="Number of Flips", row=1, col=2)
+    fig.update_yaxes(title_text="Standard Error", type="log", row=1, col=2)
+    
+    # Plot 3: Convergence Analysis
+    if stats and stats['total_flips'] > 0:
+        convergence_data = []
+        for i in range(10, len(history), max(1, len(history)//100)):
+            subset = history[:i]
+            props = [h['proportion'] for h in subset]
+            convergence_data.append({
+                'flips': subset[-1]['flips'],
+                'convergence': np.std(props)
+            })
+        
+        if convergence_data:
+            fig.add_trace(
+                go.Scatter(
+                    x=[d['flips'] for d in convergence_data],
+                    y=[d['convergence'] for d in convergence_data],
+                    mode='lines',
+                    name='Convergence',
+                    line=dict(color='#764ba2', width=2)
+                ),
+                row=2, col=1
+            )
+            
+            fig.add_hline(
+                y=0.01,
+                line_dash="dash",
+                line_color="green",
+                annotation_text="Convergence Threshold",
+                annotation_position="bottom right",
+                row=2, col=1
+            )
+    
+    fig.update_xaxes(title_text="Number of Flips", row=2, col=1)
+    fig.update_yaxes(title_text="Std of Proportions", type="log", row=2, col=1)
+    
+    # Plot 4: Z-Score
+    if stats and len(history) > 1:
+        z_scores = []
+        for h in history:
+            if h['std_error'] > 0:
+                z = (h['proportion'] - heads_weight) / h['std_error']
+                z_scores.append(z)
+            else:
+                z_scores.append(0)
+        
+        fig.add_trace(
+            go.Scatter(
+                x=flips,
+                y=z_scores,
+                mode='lines',
+                name='Z-Score',
+                line=dict(color='#FFA500', width=2)
+            ),
+            row=2, col=2
+        )
+        
+        # Critical regions
         fig.add_hrect(
-            y0=heads_weight - 0.01,
-            y1=heads_weight + 0.01,
+            y0=-1.96,
+            y1=1.96,
             line_width=0,
             fillcolor="green",
             opacity=0.1,
-            row=1, col=1
+            annotation_text="Acceptance Region (±1.96)",
+            annotation_position="top right",
+            row=2, col=2
         )
-
-        # Current proportion
-        if total_flips > 0:
-            current_prop = heads / total_flips
-            fig.add_hline(
-                y=current_prop,
-                line_dash="dot",
-                line_color="blue",
-                annotation_text=f"Current: {current_prop*100:.2f}%",
-                annotation_position="top right",
-                row=1, col=1
-            )
-
-    fig.update_xaxes(title_text="Number of Flips", row=1, col=1)
-    fig.update_yaxes(title_text="Proportion", range=[0, 1], row=1, col=1)
-
-    # Plot 2: Convergence status (bar chart showing difference from expected)
-    if total_flips > 0:
-        current_prop = heads / total_flips
-        diff = abs(current_prop - heads_weight)
-
-        # Determine status
-        if diff < 0.01:
-            status = "Converged ✓"
-            color = "#00ff00"
-        elif diff < 0.03:
-            status = "Approaching"
-            color = "#ffa500"
-        else:
-            status = "Still converging"
-            color = "#ff4444"
-
+    
+    fig.update_xaxes(title_text="Number of Flips", row=2, col=2)
+    fig.update_yaxes(title_text="Z-Score", row=2, col=2)
+    
+    # Plot 5: Distribution
+    if stats:
         fig.add_trace(
             go.Bar(
-                x=['Difference from Expected'],
-                y=[diff * 100],
-                name='Difference',
-                marker_color=color,
-                text=[f'{diff*100:.2f}%'],
+                x=['Tails', 'Heads'],
+                y=[stats['tails'], stats['heads']],
+                name='Observed',
+                marker_color=['#FF6B6B', '#4ECDC4'],
+                text=[f"{stats['tails']:,}", f"{stats['heads']:,}"],
                 textposition='outside',
             ),
-            row=1, col=2
+            row=3, col=1
         )
-
-        fig.add_hline(
-            y=1,
-            line_dash="dash",
-            line_color="green",
-            annotation_text="Convergence Zone (±1%)",
-            annotation_position="top right",
-            row=1, col=2
-        )
-
-        fig.update_yaxes(title_text="Difference (%)", range=[0, max(5, diff*100*1.5)], row=1, col=2)
-
-    # Plot 3: Distribution histogram
-    fig.add_trace(
-        go.Bar(
-            x=['Tails', 'Heads'],
-            y=[tails, heads],
-            name='Counts',
-            marker_color=['#FF6B6B', '#4ECDC4'],
-            text=[f'{tails:,}', f'{heads:,}'],
-            textposition='outside',
-        ),
-        row=2, col=1
-    )
-
-    # Expected counts
-    if total_flips > 0:
-        expected_heads = total_flips * heads_weight
-        expected_tails = total_flips * (1 - heads_weight)
-
+        
+        expected_heads = stats['total_flips'] * stats['expected_prop']
+        expected_tails = stats['total_flips'] * (1 - stats['expected_prop'])
+        
         fig.add_trace(
             go.Bar(
                 x=['Tails', 'Heads'],
                 y=[expected_tails, expected_heads],
                 name='Expected',
                 marker_color=['rgba(255,107,107,0.3)', 'rgba(78,205,196,0.3)'],
-                text=[f'{expected_tails:,.0f}', f'{expected_heads:,.0f}'],
+                text=[f"{expected_tails:,.0f}", f"{expected_heads:,.0f}"],
                 textposition='outside',
             ),
-            row=2, col=1
+            row=3, col=1
         )
-
-    fig.update_yaxes(title_text="Count", row=2, col=1)
-    fig.update_xaxes(title_text="Outcome", row=2, col=1)
-
-    # Plot 4: Convergence speed (how quickly it converges over time)
-    if len(flips) > 1:
-        diffs = [abs(p - heads_weight) * 100 for p in proportions]
-        fig.add_trace(
-            go.Scatter(
-                x=flips,
-                y=diffs,
-                mode='lines',
-                name='Difference %',
-                line=dict(color='#764ba2', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(118, 75, 162, 0.2)'
-            ),
-            row=2, col=2
+    
+    fig.update_yaxes(title_text="Count", row=3, col=1)
+    fig.update_xaxes(title_text="Outcome", row=3, col=1)
+    
+    # Plot 6: Statistical Summary (as text/table)
+    if stats:
+        # We'll use a table instead of a traditional plot
+        fig.add_annotation(
+            text=f"""
+            <b>Statistical Summary</b><br>
+            • Total Flips: {stats['total_flips']:,}<br>
+            • Current Proportion: {stats['current_prop']*100:.2f}%<br>
+            • Expected: {stats['expected_prop']*100:.1f}%<br>
+            • Difference: {stats['diff']*100:.2f}%<br>
+            • Std Error: {stats['std_error']:.4f}<br>
+            • Z-Score: {stats['z_score']:.3f}<br>
+            • 95% CI: [{stats['ci_lower']*100:.1f}%, {stats['ci_upper']*100:.1f}%]<br>
+            • Chi² p-value: {stats['chi2_p_value']:.4f}<br>
+            • Convergence Rate: {stats['convergence_rate']:.6f}<br>
+            • P(within 1%): {stats['prob_within_1pct']:.1f}%<br>
+            • P(within 5%): {stats['prob_within_5pct']:.1f}%
+            """,
+            xref="x domain",
+            yref="y domain",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(size=12, color="white"),
+            bgcolor="rgba(30,30,60,0.8)",
+            bordercolor="white",
+            borderwidth=1,
+            row=3, col=2
         )
-
-        fig.add_hline(
-            y=1,
-            line_dash="dash",
-            line_color="green",
-            annotation_text="Convergence Zone",
-            annotation_position="top right",
-            row=2, col=2
-        )
-
-        fig.update_yaxes(
-            title_text="Difference from Expected (%)",
-            type="log" if total_flips > 1000 else "linear",
-            row=2, col=2
-        )
-        fig.update_xaxes(title_text="Number of Flips", row=2, col=2)
-
+    
     # Update layout
     fig.update_layout(
-        height=800,
+        height=1200,
         showlegend=True,
         hovermode='x unified',
         template='plotly_dark',
         bargap=0.2,
     )
-
+    
     return fig
 
 def main():
     # Header
-    st.markdown('<div class="main-header">🪙 Law of Large Numbers Simulator</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="main-header">📊 Advanced Law of Large Numbers Simulator</div>', unsafe_allow_html=True)
+    
     st.markdown("""
-    This interactive simulation demonstrates how the proportion of heads converges to the expected probability 
-    as the number of coin flips increases. Adjust the parameters below and watch the convergence in real-time!
+    This advanced simulation demonstrates the Law of Large Numbers with comprehensive statistical analysis.
+    Watch how the proportion converges to the expected value while tracking various statistical measures in real-time.
     """)
-
+    
     # Initialize session state
     if 'simulator' not in st.session_state:
-        st.session_state.simulator = CoinFlipSimulator()
+        st.session_state.simulator = AdvancedCoinFlipSimulator()
         st.session_state.running = False
-        st.session_state.flips_per_step = 100
-
+        st.session_state.flips_per_step = 500
+    
     # Sidebar controls
     with st.sidebar:
         st.markdown("## 🎮 Controls")
-
+        
         # Coin parameters
         st.markdown("### Coin Properties")
         heads_weight = st.slider(
@@ -329,7 +485,7 @@ def main():
             step=0.01,
             help="The true probability of getting heads"
         )
-
+        
         flip_force = st.slider(
             "Flip Force",
             min_value=1,
@@ -338,30 +494,28 @@ def main():
             step=1,
             help="1=Light (predictable), 10=Forceful (more random)"
         )
-
+        
         # Simulation controls
         st.markdown("### Simulation Speed")
         flips_per_step = st.slider(
             "Flips per Step",
             min_value=10,
-            max_value=10000,
+            max_value=5000,
             value=500,
-            step=10,
+            step=50,
             help="Higher values = faster simulation"
         )
-
+        
         st.markdown("### Actions")
         col1, col2 = st.columns(2)
-
+        
         with col1:
             start_button = st.button("▶ Start", use_container_width=True)
         with col2:
             reset_button = st.button("🔄 Reset", use_container_width=True)
-
-        # Auto-run checkbox
+        
         auto_run = st.checkbox("Auto-run", value=True)
-
-        # Max flips
+        
         max_flips = st.selectbox(
             "Max Flips",
             options=[1000, 10000, 100000, 500000, 1000000],
@@ -369,170 +523,173 @@ def main():
             help="Maximum number of flips to simulate"
         )
         st.session_state.simulator.max_flips = max_flips
-
-        # Info box
+        
+        # Statistical insights
         st.markdown("---")
-        st.markdown("### 📊 Understanding the Simulation")
+        st.markdown("### 📊 Statistical Insights")
         st.info("""
-        **Key Concepts:**
-        - **Few flips (10-100):** Large fluctuations possible
-        - **Many flips (10,000+):** Proportion stabilizes
-        - **1 million flips:** Very close to expected value
-
-        **Convergence Zone (±1%):** 
-        When the proportion is within 1% of expected, the simulation has converged.
+        **Key Statistical Concepts:**
+        - **Confidence Intervals:** Show the range where the true proportion likely lies
+        - **Z-Score:** How many standard deviations from expected
+        - **Chi-Square Test:** Tests if observed differs significantly from expected
+        - **Standard Error:** Measures the precision of the estimate
+        - **Convergence Rate:** How quickly the proportion is stabilizing
         """)
-
-        # Stats summary
-        st.markdown("---")
-        st.markdown("### 📈 Current Stats")
-        stats_placeholder = st.empty()
-
-    # Main content area
-    col1, col2, col3, col4 = st.columns(4)
-
-    # Stats display
+    
+    # Main content
     sim = st.session_state.simulator
-
-    if sim.total_flips > 0:
-        current_prop = sim.heads / sim.total_flips
-        diff = abs(current_prop - heads_weight) * 100
-
-        # Determine convergence status
-        if diff < 1:
-            status = "✅ Converged!"
-            status_color = "converged"
-        elif diff < 3:
-            status = "🔄 Approaching..."
-            status_color = "converging"
-        else:
-            status = "⏳ Still converging"
-            status_color = "far"
-
-        with col1:
-            st.markdown(f"""
-            <div class="stat-card">
-                <div class="stat-label">Total Flips</div>
-                <div class="stat-value">{sim.total_flips:,}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(f"""
-            <div class="stat-card" style="background: linear-gradient(135deg, #4ECDC4 0%, #44a08d 100%);">
-                <div class="stat-label">Heads</div>
-                <div class="stat-value">{sim.heads:,} ({current_prop*100:.2f}%)</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col3:
-            st.markdown(f"""
-            <div class="stat-card" style="background: linear-gradient(135deg, #FF6B6B 0%, #ee5a24 100%);">
-                <div class="stat-label">Tails</div>
-                <div class="stat-value">{sim.tails:,} ({(1-current_prop)*100:.2f}%)</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with col4:
-            st.markdown(f"""
-            <div class="stat-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
-                <div class="stat-label">Status</div>
-                <div class="stat-value {status_color}">{status}</div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        for col in [col1, col2, col3, col4]:
-            with col:
-                st.markdown(f"""
-                <div class="stat-card">
-                    <div class="stat-label">Waiting...</div>
-                    <div class="stat-value">-</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    # Sidebar stats update
-    if sim.total_flips > 0:
-        with stats_placeholder.container():
-            st.markdown(f"""
-            - **Total Flips:** {sim.total_flips:,}
-            - **Heads:** {sim.heads:,} ({current_prop*100:.2f}%)
-            - **Tails:** {sim.tails:,} ({(1-current_prop)*100:.2f}%)
-            - **Expected Heads:** {heads_weight*100:.1f}%
-            - **Difference:** {diff:.2f}%
-            - **Flip Force:** {flip_force}/10
-            """)
-
+    
     # Handle buttons
     if reset_button:
-        sim = CoinFlipSimulator()
+        sim = AdvancedCoinFlipSimulator()
         st.session_state.simulator = sim
         st.session_state.running = False
         st.rerun()
-
+    
     if start_button:
         st.session_state.running = True
-
+    
     # Run simulation
     if (auto_run or st.session_state.running) and sim.total_flips < sim.max_flips:
-        # Run flips
-        new_heads, new_tails = sim.run_flips(flips_per_step, heads_weight, flip_force)
-
-        # Update session state
+        sim.run_flips(flips_per_step, heads_weight, flip_force)
         st.session_state.simulator = sim
-
-        # Progress bar
+        
         progress = min(sim.total_flips / sim.max_flips, 1.0)
         st.progress(progress, text=f"Simulating... {sim.total_flips:,} / {sim.max_flips:,} flips")
-
-        # Auto-rerun if not complete
+        
         if sim.total_flips < sim.max_flips and auto_run:
-            time.sleep(0.01)  # Small delay to prevent UI freezing
+            time.sleep(0.01)
             st.rerun()
         elif sim.total_flips >= sim.max_flips:
             st.session_state.running = False
             st.balloons()
             st.success(f"✅ Completed {sim.total_flips:,} flips! The Law of Large Numbers is demonstrated!")
-
+    
+    # Get statistics
+    stats = sim.get_statistics(heads_weight)
+    
+    # Display key metrics
+    if stats:
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric(
+                "Total Flips",
+                f"{stats['total_flips']:,}",
+                delta=f"{stats['diff']*100:.2f}% from expected" if stats['total_flips'] > 0 else None
+            )
+        
+        with col2:
+            st.metric(
+                "Heads Proportion",
+                f"{stats['current_prop']*100:.2f}%",
+                delta=f"Expected: {stats['expected_prop']*100:.1f}%"
+            )
+        
+        with col3:
+            st.metric(
+                "Z-Score",
+                f"{stats['z_score']:.3f}",
+                delta="Within 1.96" if abs(stats['z_score']) < 1.96 else "Outside 1.96"
+            )
+        
+        with col4:
+            st.metric(
+                "95% CI",
+                f"[{stats['ci_lower']*100:.1f}%, {stats['ci_upper']*100:.1f}%]",
+                delta=f"Width: {(stats['ci_upper']-stats['ci_lower'])*100:.1f}%"
+            )
+        
+        with col5:
+            p_value = stats['chi2_p_value']
+            st.metric(
+                "Chi² p-value",
+                f"{p_value:.4f}",
+                delta="Not significant" if p_value > 0.05 else "Significant!"
+            )
+        
+        # Additional insights
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="insight-box">
+                <b>🎯 Convergence Status:</b><br>
+                {'' if stats['diff'] < 0.01 else 'Not '}Converged (within 1%)<br>
+                <b>Probability within 1%:</b> {stats['prob_within_1pct']:.1f}%<br>
+                <b>Probability within 5%:</b> {stats['prob_within_5pct']:.1f}%
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="insight-box">
+                <b>📈 Convergence Analysis:</b><br>
+                <b>Std Error:</b> {stats['std_error']:.4f}<br>
+                <b>Trend:</b> {'↓' if stats['trend'] < 0 else '↑'} {abs(stats['trend']):.6f}<br>
+                <b>Recent Volatility:</b> {stats['recent_std']:.4f}
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            if stats['expected_flips_to_conv'] > 0 and stats['expected_flips_to_conv'] < 1e6:
+                st.markdown(f"""
+                <div class="insight-box">
+                    <b>⏱️ Predictions:</b><br>
+                    <b>Expected flips to converge:</b><br>
+                    ~{stats['expected_flips_to_conv']:,.0f} more flips<br>
+                    <b>Total expected:</b><br>
+                    ~{stats['total_flips'] + stats['expected_flips_to_conv']:,.0f} flips
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="insight-box">
+                    <b>⏱️ Status:</b><br>
+                    {'Already converged!' if stats['diff'] < 0.01 else 'Converging slowly...'}<br>
+                    <b>Keep simulating</b> to see convergence
+                </div>
+                """, unsafe_allow_html=True)
+    
     # Create and display plots
-    if sim.history:
-        fig = create_plots(
-            sim.history,
-            heads_weight,
-            sim.total_flips,
-            sim.heads,
-            sim.tails
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("👆 Press 'Start' or enable 'Auto-run' to begin the simulation!")
-
-        # Show example of what the plot will look like
-        st.markdown("### 📊 Preview")
-        st.markdown("""
-        The simulation will show:
-        1. **Running Proportion** - How the proportion of heads changes over time
-        2. **Convergence Status** - How close we are to the expected value
-        3. **Distribution** - Current vs expected counts
-        4. **Convergence Speed** - How quickly we're approaching the expected value
-        """)
-
-    # Footer with explanation
+    fig = create_advanced_plots(sim.history, stats, heads_weight)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Export data option
+    if stats and len(sim.history) > 0:
+        st.markdown("---")
+        with st.expander("📥 Export Data", expanded=False):
+            st.markdown("Download the simulation data for further analysis:")
+            
+            # Create DataFrame
+            df = pd.DataFrame(sim.history)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="📊 Download CSV",
+                    data=csv,
+                    file_name=f"coin_flip_data_{sim.total_flips}_flips.csv",
+                    mime="text/csv"
+                )
+            with col2:
+                st.markdown(f"**Data Points:** {len(df):,}")
+                st.markdown(f"**File Size:** ~{len(csv) / 1024:.1f} KB")
+    
+    # Footer
     st.markdown("---")
     st.markdown("""
-    ### 📚 Understanding the Law of Large Numbers
-
-    The **Law of Large Numbers (LLN)** states that as the number of trials increases, 
-    the sample average converges to the expected value.
-
-    **Key Observations:**
-    - 🔴 **Small samples (10-100 flips):** Results can be far from expected
-    - 🟡 **Medium samples (1,000-10,000 flips):** Results begin to stabilize
-    - 🟢 **Large samples (100,000+ flips):** Results are very close to expected
-
-    **The Flip Force Effect:**
-    - **Low force (1-3):** The coin's bias dominates, results are more predictable
-    - **Medium force (4-7):** Natural randomness, good demonstration of LLN
-    - **High force (8-10):** Random factors dominate, tends toward 50/50
+    ### 📚 Understanding the Statistical Analysis
+    
+    | Metric | What it tells you |
+    |--------|-------------------|
+    | **Confidence Interval** | The range that contains the true proportion with 95% probability |
+    | **Z-Score** | How many standard deviations the current proportion is from expected |
+    | **Chi-Square Test** | Whether the observed distribution differs significantly from expected |
+    | **Standard Error** | The precision of your estimate (smaller = better) |
+    | **Convergence Rate** | How quickly the proportion is stabilizing |
+    | **P(within 1%)** | Probability that the current proportion is within 1% of expected |
     """)
 
 if __name__ == "__main__":
